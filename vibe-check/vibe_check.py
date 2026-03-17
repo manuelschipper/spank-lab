@@ -31,9 +31,9 @@ WINDOW_SECONDS = 600       # look at last 10 minutes
 DECAY_HALF_LIFE = 15.0     # slaps decay with 15s half-life
 
 # Thresholds: calm → frustrated → hot → angry
-FRUSTRATED_THRESHOLD = 1.0
-HOT_THRESHOLD = 3.0
-ANGRY_THRESHOLD = 5.0
+FRUSTRATED_THRESHOLD = 3.0
+HOT_THRESHOLD = 7.0
+ANGRY_THRESHOLD = 10.0
 
 # --- Levels and behavioral instructions ---
 

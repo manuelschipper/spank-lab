@@ -90,25 +90,29 @@ class TestComputeScore:
 class TestScoreToLevel:
     """Test boundary conditions for level classification."""
 
-    @pytest.mark.parametrize("score, expected", [
-        (0.0, "calm"),
-        (0.99, "calm"),
-        (1.0, "frustrated"),
-        (2.99, "frustrated"),
-        (3.0, "hot"),
-        (4.99, "hot"),
-        (5.0, "angry"),
-        (100.0, "angry"),
-    ])
-    def test_threshold_boundaries(self, score, expected):
-        assert vibe_check.score_to_level(score) == expected
-
-    def test_exact_frustrated_boundary(self):
-        """Score exactly at FRUSTRATED_THRESHOLD is frustrated, not calm."""
-        assert vibe_check.score_to_level(vibe_check.FRUSTRATED_THRESHOLD) == "frustrated"
+    def test_zero_is_calm(self):
+        assert vibe_check.score_to_level(0.0) == "calm"
 
     def test_just_below_frustrated(self):
-        assert vibe_check.score_to_level(vibe_check.FRUSTRATED_THRESHOLD - 0.001) == "calm"
+        assert vibe_check.score_to_level(vibe_check.FRUSTRATED_THRESHOLD - 0.01) == "calm"
+
+    def test_at_frustrated(self):
+        assert vibe_check.score_to_level(vibe_check.FRUSTRATED_THRESHOLD) == "frustrated"
+
+    def test_just_below_hot(self):
+        assert vibe_check.score_to_level(vibe_check.HOT_THRESHOLD - 0.01) == "frustrated"
+
+    def test_at_hot(self):
+        assert vibe_check.score_to_level(vibe_check.HOT_THRESHOLD) == "hot"
+
+    def test_just_below_angry(self):
+        assert vibe_check.score_to_level(vibe_check.ANGRY_THRESHOLD - 0.01) == "hot"
+
+    def test_at_angry(self):
+        assert vibe_check.score_to_level(vibe_check.ANGRY_THRESHOLD) == "angry"
+
+    def test_very_high_is_angry(self):
+        assert vibe_check.score_to_level(100.0) == "angry"
 
 
 # ---------------------------------------------------------------------------
