@@ -26,7 +26,7 @@ class TestComputeHorseScores:
         assert vibe_check.compute_horse_scores([]) == (0.0, 0.0)
 
     def test_light_taps_only_go_to_spur(self, monkeypatch):
-        """Events with amplitude < 0.15 contribute only to spur_score."""
+        """Events with amplitude < HORSE_BUCK_THRESHOLD contribute only to spur_score."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
 
@@ -41,41 +41,44 @@ class TestComputeHorseScores:
         assert buck == pytest.approx(0.0)
 
     def test_hard_slaps_only_go_to_buck(self, monkeypatch):
-        """Events with amplitude >= 0.15 contribute only to buck_score."""
+        """Events with amplitude >= HORSE_BUCK_THRESHOLD contribute only to buck_score."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
 
+        threshold = vibe_check.HORSE_BUCK_THRESHOLD
         events = [
-            {"time": now, "amplitude": 0.15},
+            {"time": now, "amplitude": threshold},
             {"time": now, "amplitude": 0.50},
             {"time": now, "amplitude": 1.00},
         ]
         spur, buck = vibe_check.compute_horse_scores(events)
         assert spur == pytest.approx(0.0)
-        # amp=0.15 -> 1 + min(0.15,1)*2 = 1.30
+        # amp=threshold(0.25) -> 1 + min(0.25,1)*2 = 1.50
         # amp=0.50 -> 1 + min(0.50,1)*2 = 2.00
         # amp=1.00 -> 1 + min(1.00,1)*2 = 3.00
-        assert buck == pytest.approx(1.30 + 2.00 + 3.00)
+        raw = 1.50 + 2.00 + 3.00
+        assert buck == pytest.approx(min(raw, vibe_check.HORSE_BUCK_MAX_SCORE))
 
     def test_mixed_events_split_correctly(self, monkeypatch):
         """Light taps go to spur, hard slaps go to buck."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
 
+        threshold = vibe_check.HORSE_BUCK_THRESHOLD  # 0.25
         events = [
-            {"time": now, "amplitude": 0.05},   # spur (light)
-            {"time": now, "amplitude": 0.50},   # buck (hard)
-            {"time": now, "amplitude": 0.10},   # spur (light)
-            {"time": now, "amplitude": 0.20},   # buck (hard)
+            {"time": now, "amplitude": 0.05},        # spur (below threshold)
+            {"time": now, "amplitude": 0.50},         # buck (above threshold)
+            {"time": now, "amplitude": 0.10},         # spur (below threshold)
+            {"time": now, "amplitude": threshold},    # buck (at threshold)
         ]
         spur, buck = vibe_check.compute_horse_scores(events)
         # spur: 2 light taps at age=0 -> 2 * 1.0 = 2.0
         assert spur == pytest.approx(2.0)
-        # buck: amp=0.50 -> 2.0, amp=0.20 -> 1.4
-        assert buck == pytest.approx(2.0 + 1.4)
+        # buck: amp=0.50 -> 2.0, amp=threshold(0.25) -> 1.5
+        assert buck == pytest.approx(2.0 + 1.5)
 
     def test_boundary_amplitude_goes_to_buck(self, monkeypatch):
-        """Amplitude exactly at HORSE_BUCK_THRESHOLD (0.15) is a buck."""
+        """Amplitude exactly at HORSE_BUCK_THRESHOLD is a buck."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
 
@@ -97,7 +100,7 @@ class TestComputeHorseScores:
         assert buck == pytest.approx(0.0)
 
     def test_buck_decay_uses_buck_half_life(self, monkeypatch):
-        """Buck events decay with HORSE_BUCK_HALF_LIFE (45s)."""
+        """Buck events decay with HORSE_BUCK_HALF_LIFE (15s)."""
         now = 1000.0
         hl = vibe_check.HORSE_BUCK_HALF_LIFE
         monkeypatch.setattr(time, "time", lambda: now)
@@ -108,10 +111,10 @@ class TestComputeHorseScores:
         # After one half-life: weight=0.5, amp_factor=1+0.5*2=2.0
         assert buck == pytest.approx(0.5 * 2.0)
 
-    def test_spur_decays_faster_than_buck(self, monkeypatch):
-        """At the same age, spur decays more than buck (20s vs 45s half-life)."""
+    def test_spur_and_buck_use_configured_half_lives(self, monkeypatch):
+        """Spur and buck channels each decay using their own half-life constant."""
         now = 1000.0
-        age = 30.0  # 1.5 spur half-lives, ~0.67 buck half-lives
+        age = 30.0
         monkeypatch.setattr(time, "time", lambda: now)
 
         spur_events = [{"time": now - age, "amplitude": 0.05}]
@@ -122,8 +125,10 @@ class TestComputeHorseScores:
 
         spur_weight = 0.5 ** (age / vibe_check.HORSE_SPUR_HALF_LIFE)
         buck_weight = 0.5 ** (age / vibe_check.HORSE_BUCK_HALF_LIFE)
-        # Spur weight should be smaller (decayed more)
-        assert spur_weight < buck_weight
+        # Spur: flat 1.0 contribution * weight
+        assert spur == pytest.approx(spur_weight * 1.0)
+        # Buck: amp_factor = 1 + min(0.50, 1.0)*2 = 2.0
+        assert buck == pytest.approx(buck_weight * 2.0)
 
     def test_negative_amplitude_clamped_to_zero(self, monkeypatch):
         """Negative amplitude is treated as 0 via max(amp, 0.0)."""
@@ -132,7 +137,7 @@ class TestComputeHorseScores:
 
         events = [{"time": now, "amplitude": -0.5}]
         spur, buck = vibe_check.compute_horse_scores(events)
-        # amp=0 < 0.15 -> spur channel, flat 1.0 contribution
+        # amp=0 < HORSE_BUCK_THRESHOLD -> spur channel, flat 1.0 contribution
         assert spur == pytest.approx(1.0)
         assert buck == pytest.approx(0.0)
 
@@ -203,21 +208,23 @@ class TestComputeHorseState:
         assert state == "normal"
 
     def test_buck_overrides_speed_from_normal(self, monkeypatch):
-        """Buck overrides when buck >= HORSE_BUCK_ACTIVATE (2.0), from normal."""
+        """Buck overrides when buck >= HORSE_BUCK_ACTIVATE, from normal."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
         state, lbt = vibe_check.compute_horse_state(
-            spur=0.0, buck=2.0, prev_state="normal", last_buck_time=0.0
+            spur=0.0, buck=vibe_check.HORSE_BUCK_ACTIVATE,
+            prev_state="normal", last_buck_time=0.0
         )
         assert state == "buck"
         assert lbt == now
 
     def test_buck_overrides_speed_from_speed(self, monkeypatch):
-        """Buck overrides when buck >= HORSE_BUCK_ACTIVATE (2.0), even from speed."""
+        """Buck overrides when buck >= HORSE_BUCK_ACTIVATE, even from speed."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
         state, lbt = vibe_check.compute_horse_state(
-            spur=5.0, buck=2.0, prev_state="speed", last_buck_time=0.0
+            spur=5.0, buck=vibe_check.HORSE_BUCK_ACTIVATE,
+            prev_state="speed", last_buck_time=0.0
         )
         assert state == "buck"
         assert lbt == now
@@ -235,9 +242,9 @@ class TestComputeHorseState:
         """Buck stays if score < deactivate BUT cooldown hasn't elapsed."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
-        # last_buck_time was 5 seconds ago, cooldown is 8s
+        # last_buck_time was 2 seconds ago, cooldown is 5s
         state, lbt = vibe_check.compute_horse_state(
-            spur=0.0, buck=0.5, prev_state="buck", last_buck_time=now - 5.0
+            spur=0.0, buck=0.5, prev_state="buck", last_buck_time=now - 2.0
         )
         assert state == "buck"
 
@@ -245,7 +252,7 @@ class TestComputeHorseState:
         """Buck -> normal when buck < deactivate AND cooldown has elapsed."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
-        # last_buck_time was 10 seconds ago, cooldown is 8s
+        # last_buck_time was 10 seconds ago, cooldown is 5s
         state, lbt = vibe_check.compute_horse_state(
             spur=0.0, buck=0.5, prev_state="buck", last_buck_time=now - 10.0
         )
@@ -301,7 +308,8 @@ class TestComputeHorseState:
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
         state, lbt = vibe_check.compute_horse_state(
-            spur=0.0, buck=2.5, prev_state="buck", last_buck_time=now - 50.0
+            spur=0.0, buck=vibe_check.HORSE_BUCK_ACTIVATE,
+            prev_state="buck", last_buck_time=now - 50.0
         )
         assert state == "buck"
         # The >= ACTIVATE check fires first, returning (buck, now)
@@ -320,13 +328,14 @@ class TestComputeHorseState:
 
         # Step 2: speed -> buck (hard slap while speeding)
         state, lbt = vibe_check.compute_horse_state(
-            spur=3.0, buck=2.5, prev_state="speed", last_buck_time=lbt
+            spur=3.0, buck=vibe_check.HORSE_BUCK_ACTIVATE,
+            prev_state="speed", last_buck_time=lbt
         )
         assert state == "buck"
         assert lbt == now
 
-        # Step 3: buck stays (cooldown not done)
-        monkeypatch.setattr(time, "time", lambda: now + 5.0)
+        # Step 3: buck stays (cooldown not done — only 1s elapsed)
+        monkeypatch.setattr(time, "time", lambda: now + 1.0)
         state, lbt = vibe_check.compute_horse_state(
             spur=3.0, buck=0.5, prev_state="buck", last_buck_time=lbt
         )
@@ -364,8 +373,8 @@ class TestHorseHookOutput:
         captured.seek(0)
         return json.loads(captured.read())
 
-    def test_normal_state_no_context_no_permission(self, monkeypatch, tmp_path):
-        """Normal state: no additionalContext, no permissionDecision."""
+    def test_normal_state_has_preamble_context_no_permission(self, monkeypatch, tmp_path):
+        """Normal state: additionalContext with preamble, no permissionDecision."""
         result = self._run_horse_hook(monkeypatch, {
             "profile": "horse",
             "state": "normal",
@@ -376,7 +385,8 @@ class TestHorseHookOutput:
 
         hook = result["hookSpecificOutput"]
         assert hook["hookEventName"] == "PreToolUse"
-        assert "additionalContext" not in hook
+        assert "additionalContext" in hook
+        assert "NORMAL" in hook["additionalContext"]
         assert "permissionDecision" not in hook
 
     def test_speed_state_allow_with_context(self, monkeypatch, tmp_path):
@@ -453,8 +463,9 @@ class TestHorseHookOutput:
         result = json.loads(captured.getvalue())
         hook = result["hookSpecificOutput"]
         assert hook["hookEventName"] == "PreToolUse"
-        # No events -> normal state -> no context, no permission
-        assert "additionalContext" not in hook
+        # No events -> normal state -> preamble context, no permission
+        assert "additionalContext" in hook
+        assert "NORMAL" in hook["additionalContext"]
         assert "permissionDecision" not in hook
 
     def test_horse_hook_ignores_non_horse_cache(self, monkeypatch, tmp_path):
@@ -478,8 +489,9 @@ class TestHorseHookOutput:
 
         result = json.loads(captured.getvalue())
         hook = result["hookSpecificOutput"]
-        # Should see normal horse state (defaults), not frustration output
-        assert "additionalContext" not in hook
+        # Should see normal horse state (preamble context), not frustration output
+        assert "additionalContext" in hook
+        assert "NORMAL" in hook["additionalContext"]
         assert "permissionDecision" not in hook
 
 
@@ -493,8 +505,11 @@ class TestHorseStatesConfig:
     def test_all_three_states_present(self):
         assert set(vibe_check.HORSE_STATES.keys()) == {"normal", "speed", "buck"}
 
-    def test_normal_has_no_hook_reason(self):
-        assert vibe_check.HORSE_STATES["normal"]["hook_reason"] is None
+    def test_normal_has_hook_reason_with_preamble(self):
+        reason = vibe_check.HORSE_STATES["normal"]["hook_reason"]
+        assert reason is not None
+        assert "NORMAL" in reason
+        assert "HORSE MODE" in reason
 
     def test_normal_has_no_permission(self):
         assert vibe_check.HORSE_STATES["normal"]["permission"] is None
@@ -538,10 +553,16 @@ class TestHorseConstants:
     """Guard against accidental constant changes that would break the profile."""
 
     def test_buck_threshold(self):
-        assert vibe_check.HORSE_BUCK_THRESHOLD == 0.15
+        assert vibe_check.HORSE_BUCK_THRESHOLD == 0.25
 
-    def test_spur_half_life_shorter_than_buck(self):
-        assert vibe_check.HORSE_SPUR_HALF_LIFE < vibe_check.HORSE_BUCK_HALF_LIFE
+    def test_spur_and_buck_half_lives(self):
+        """Both channels use the same half-life (10.0s)."""
+        assert vibe_check.HORSE_SPUR_HALF_LIFE == 10.0
+        assert vibe_check.HORSE_BUCK_HALF_LIFE == 10.0
+
+    def test_buck_max_score_exists(self):
+        """Buck score is capped to allow quick decay recovery."""
+        assert vibe_check.HORSE_BUCK_MAX_SCORE == 4.0
 
     def test_spur_activate_greater_than_deactivate(self):
         """Hysteresis requires activate > deactivate."""

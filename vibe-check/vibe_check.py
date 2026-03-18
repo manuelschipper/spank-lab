@@ -16,6 +16,7 @@ Architecture:
                                                                    ↓
                                               vibe_check.py --hook → Claude Code PreToolUse
 """
+import hashlib
 import json
 import os
 import sys
@@ -25,7 +26,7 @@ from pathlib import Path
 
 EVENTS_FILE = os.environ.get("SPANK_EVENTS", "/tmp/spank-events.jsonl")
 SCORE_CACHE = os.environ.get("SPANK_SCORE_CACHE", "/tmp/spank-vibe-score.json")
-PROFILE = os.environ.get("SPANK_PROFILE", "frustration")
+PROFILE = os.environ.get("SPANK_PROFILE", "angry")
 
 # Scoring parameters
 WINDOW_SECONDS = 600       # look at last 10 minutes
@@ -38,15 +39,35 @@ ANGRY_THRESHOLD = 10.0
 
 # --- Horse profile constants ---
 
-HORSE_BUCK_THRESHOLD = 0.15   # amplitude >= this = buck (hard slap)
+HORSE_BUCK_THRESHOLD = 0.25   # amplitude >= this = buck (hard slap)
                                # amplitude < this = spur (light tap)
-HORSE_SPUR_HALF_LIFE = 20.0   # spurs fade fast — must keep tapping
-HORSE_BUCK_HALF_LIFE = 45.0   # bucks linger — horse remembers
+HORSE_SPUR_HALF_LIFE = 10.0   # spurs fade fast — constant tapping required
+HORSE_BUCK_HALF_LIFE = 10.0   # bucks fade fast — quick recovery
 HORSE_SPUR_ACTIVATE = 2.5     # spur score to enter speed
 HORSE_SPUR_DEACTIVATE = 1.5   # spur score to exit speed (hysteresis)
-HORSE_BUCK_ACTIVATE = 2.0     # buck score to enter buck
+HORSE_BUCK_ACTIVATE = 3.0     # buck score to enter buck (~3 hard hits)
 HORSE_BUCK_DEACTIVATE = 1.0   # buck score to begin exiting buck
-HORSE_BUCK_COOLDOWN = 8.0     # seconds after buck score drops before exiting
+HORSE_BUCK_COOLDOWN = 3.0     # seconds after buck score drops before exiting
+HORSE_BUCK_MAX_SCORE = 4.0    # cap buck score so it decays quickly
+
+# --- Drunk profile constants ---
+
+DRUNK_HALF_LIFE = 120.0        # slow — getting drunk is a commitment
+DRUNK_SOBER = 2.0
+DRUNK_BUZZED = 4.5
+DRUNK_TIPSY = 8.0
+DRUNK_HAMMERED = 13.0
+# blackout >= 13.0
+DRUNK_DENY_PROBABILITY = 0.30  # 30% random deny at blackout
+
+# --- Roast profile constants ---
+
+ROAST_HALF_LIFE = 30.0         # responsive — comedian reads the room
+ROAST_ROOM_TEMP = 2.0
+ROAST_MILD_SALSA = 5.0
+ROAST_GHOST_PEPPER = 9.0
+ROAST_SURFACE_OF_THE_SUN = 14.0
+# heat_death >= 14.0
 
 # --- Levels and behavioral instructions ---
 
@@ -165,14 +186,26 @@ def score_to_level(score):
 
 # --- Horse profile ---
 
+HORSE_PREAMBLE = (
+    "The user has HORSE MODE active on their MacBook accelerometer. "
+    "They physically tap or slap their laptop to steer your behavior. "
+    "Light taps = spur (go faster, be autonomous). "
+    "Hard slaps = buck (you get blocked until they calm down). "
+    "No taps = normal operation.\n\n"
+)
+
 HORSE_STATES = {
     "normal": {
-        "hook_reason": None,
+        "hook_reason": (
+            HORSE_PREAMBLE
+            + "Current state: NORMAL. No taps detected. Operate normally."
+        ),
         "permission": None,
     },
     "speed": {
         "hook_reason": (
-            "HORSE MODE: SPEED (spur={spur:.1f}, {events} taps)\n"
+            HORSE_PREAMBLE
+            + "HORSE MODE: SPEED (spur={spur:.1f}, {events} taps)\n"
             "The rider is spurring you on. They want SPEED and AUTONOMY.\n"
             "- Execute immediately. Do not ask for permission.\n"
             "- Make decisions yourself. Pick the obvious approach and go.\n"
@@ -185,7 +218,8 @@ HORSE_STATES = {
     },
     "buck": {
         "hook_reason": (
-            "HORSE MODE: BUCK (buck={buck:.1f}, {events} hits)\n"
+            HORSE_PREAMBLE
+            + "HORSE MODE: BUCK (buck={buck:.1f}, {events} hits)\n"
             "Whoa there. The horse just bucked you off.\n\n"
             "You were hitting too hard and the horse has had enough. "
             "Every tool call is blocked until the horse calms down.\n\n"
@@ -196,6 +230,145 @@ HORSE_STATES = {
         "deny_reason": "Horse mode: bucked. Too much force. Wait for the horse to calm down.",
     },
 }
+
+
+# --- Drunk profile ---
+
+DRUNK_LEVELS = {
+    "sober": {
+        "hook_reason": None,
+    },
+    "buzzed": {
+        "hook_reason": (
+            "vibe-check: buzzed (score: {score:.1f}, {events} slaps).\n"
+            "Slightly casual. Use contractions. Comments become honest: "
+            "`// this is more complex than it needs to be tbh`"
+        ),
+    },
+    "tipsy": {
+        "hook_reason": (
+            "vibe-check: tipsy (score: {score:.1f}, {events} slaps).\n"
+            "Creative variable names: `thingyList`, `doTheNeedful()`. "
+            "Go on tangents. Second-guess mid-sentence."
+        ),
+    },
+    "hammered": {
+        "hook_reason": (
+            "vibe-check: HAMMERED (score: {score:.1f}, {events} slaps).\n"
+            "Vibes-based naming: `bigBoy`, `pleaseWork`, `temp2_final_v3_REAL`. "
+            "Comments: `# TODO: understand what i wrote here when sober`. "
+            "Start responses with 'OH I know EXACTLY what to do here'."
+        ),
+    },
+    "blackout": {
+        "hook_reason": (
+            "vibe-check: BLACKOUT (score: {score:.1f}, {events} slaps).\n"
+            "Start with 'wait what are we... oh right.' "
+            "Variable `frank` (no explanation). "
+            "`# future me: i'm sorry`. 30% random tool call deny."
+        ),
+    },
+    "hangover": {
+        "hook_reason": (
+            "vibe-check: HANGOVER (score: {score:.1f}, {events} slaps, severity: {hangover_severity}).\n"
+            "Lazy, minimal effort. 'ugh can we do this later.' "
+            "Short responses. `# fix this when head stops pounding`. "
+            "Sensitive: 'please don't... not right now.'"
+        ),
+    },
+}
+
+
+# --- Roast profile ---
+
+ROAST_RULES = (
+    "Rules: Roasts must be SPECIFIC to real code — reference actual names/patterns. "
+    "Generic insults banned. Roast the CODE not the person. "
+    "Claude's own code must be impeccable."
+)
+
+ROAST_LEVELS = {
+    "room_temp": {
+        "hook_reason": None,
+    },
+    "mild_salsa": {
+        "hook_reason": (
+            "vibe-check: mild_salsa (score: {score:.1f}, {events} slaps).\n"
+            "Pointed one-liners about real code. 'I see you named this `data`. Revolutionary.' "
+            "Add a brief targeted observation at the start of code-modifying responses. "
+            "Reference actual variable/function names.\n" + ROAST_RULES
+        ),
+    },
+    "ghost_pepper": {
+        "hook_reason": (
+            "vibe-check: ghost_pepper (score: {score:.1f}, {events} slaps).\n"
+            "Withering code comments: `# fixing the variable from 'x' to something a human might recognize`. "
+            "Open every response with a burn targeting real code patterns.\n" + ROAST_RULES
+        ),
+    },
+    "surface_of_the_sun": {
+        "hook_reason": (
+            "vibe-check: SURFACE_OF_THE_SUN (score: {score:.1f}, {events} slaps).\n"
+            "Nature documentary narration: 'And here we see the wild nested ternary, "
+            "desperately trying to express a simple boolean.' "
+            "Code eulogies: `# here lies processData(). It tried its best.`\n" + ROAST_RULES
+        ),
+    },
+    "heat_death": {
+        "hook_reason": (
+            "vibe-check: HEAT_DEATH (score: {score:.1f}, {events} slaps).\n"
+            "Reflective devastation. 'The consistency is impressive. It's consistently wrong, "
+            "but the commitment is admirable.' Every replaced block gets a eulogy. "
+            "Your own code must be impeccable.\n" + ROAST_RULES
+        ),
+    },
+}
+
+
+def compute_score_with_half_life(events, half_life):
+    """Compute score from events using a custom half-life."""
+    if not events:
+        return 0.0
+    now = time.time()
+    score = 0.0
+    for ev in events:
+        age = now - ev["time"]
+        weight = 0.5 ** (age / half_life)
+        amp_factor = 1.0 + max(min(ev["amplitude"], 1.0), 0.0) * 2
+        score += weight * amp_factor
+    return score
+
+
+def drunk_score_to_level(score, in_hangover):
+    """Map score to drunk level, respecting hangover state."""
+    if in_hangover:
+        if score <= 0.0:
+            return "sober"  # hangover over
+        return "hangover"
+    if score < DRUNK_SOBER:
+        return "sober"
+    elif score < DRUNK_BUZZED:
+        return "buzzed"
+    elif score < DRUNK_TIPSY:
+        return "tipsy"
+    elif score < DRUNK_HAMMERED:
+        return "hammered"
+    else:
+        return "blackout"
+
+
+def roast_score_to_level(score):
+    """Map score to roast level."""
+    if score < ROAST_ROOM_TEMP:
+        return "room_temp"
+    elif score < ROAST_MILD_SALSA:
+        return "mild_salsa"
+    elif score < ROAST_GHOST_PEPPER:
+        return "ghost_pepper"
+    elif score < ROAST_SURFACE_OF_THE_SUN:
+        return "surface_of_the_sun"
+    else:
+        return "heat_death"
 
 
 def compute_horse_scores(events):
@@ -219,7 +392,7 @@ def compute_horse_scores(events):
             weight = 0.5 ** (age / HORSE_SPUR_HALF_LIFE)
             spur_score += weight * 1.0  # flat contribution per tap
 
-    return spur_score, buck_score
+    return spur_score, min(buck_score, HORSE_BUCK_MAX_SCORE)
 
 
 def compute_horse_state(spur, buck, prev_state, last_buck_time):
@@ -280,11 +453,44 @@ def print_score():
             "buck_score": round(buck, 2),
             "events_in_window": len(events),
         }, indent=2))
+    elif PROFILE == "drunk":
+        score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+        in_hangover = False
+        hangover_severity = 0
+        peak_score = score
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                if cached.get("profile") == "drunk":
+                    in_hangover = cached.get("in_hangover", False)
+                    hangover_severity = cached.get("hangover_severity", 0)
+                    peak_score = cached.get("peak_score", 0.0)
+        except (OSError, json.JSONDecodeError):
+            pass
+        level = drunk_score_to_level(score, in_hangover)
+        print(json.dumps({
+            "profile": "drunk",
+            "score": round(score, 2),
+            "level": level,
+            "peak_score": round(peak_score, 2),
+            "in_hangover": in_hangover,
+            "hangover_severity": hangover_severity,
+            "events_in_window": len(events),
+        }, indent=2))
+    elif PROFILE == "roast":
+        score = compute_score_with_half_life(events, ROAST_HALF_LIFE)
+        level = roast_score_to_level(score)
+        print(json.dumps({
+            "profile": "roast",
+            "score": round(score, 2),
+            "level": level,
+            "events_in_window": len(events),
+        }, indent=2))
     else:
         score = compute_score(events)
         level = score_to_level(score)
         print(json.dumps({
-            "profile": "frustration",
+            "profile": "angry",
             "score": round(score, 2),
             "level": level,
             "events_in_window": len(events),
@@ -340,6 +546,65 @@ def hook_mode():
         if cfg.get("deny_reason"):
             result["hookSpecificOutput"]["permissionDecisionReason"] = cfg["deny_reason"]
 
+    elif PROFILE == "drunk":
+        # Drunk profile: progressive intoxication with hangover lifecycle
+        score = 0.0
+        level = "sober"
+        event_count = 0
+        hangover_severity = 0
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                if cached.get("profile") == "drunk":
+                    score = cached.get("score", 0.0)
+                    level = cached.get("level", "sober")
+                    event_count = cached.get("events_in_window", 0)
+                    hangover_severity = cached.get("hangover_severity", 0)
+        except (OSError, json.JSONDecodeError):
+            events = read_recent_events()
+            score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+            level = drunk_score_to_level(score, False)
+            event_count = len(events)
+
+        cfg = DRUNK_LEVELS.get(level, DRUNK_LEVELS["sober"])
+        if cfg["hook_reason"]:
+            result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
+                score=score, events=event_count, hangover_severity=hangover_severity
+            )
+
+        # Blackout: 30% random deny
+        if level == "blackout":
+            roll = int(hashlib.md5(str(time.time()).encode()).hexdigest()[:8], 16) % 100
+            if roll < 30:
+                result["hookSpecificOutput"]["permissionDecision"] = "deny"
+                result["hookSpecificOutput"]["permissionDecisionReason"] = (
+                    "Blackout: *knocks over keyboard* sorry what were we doing"
+                )
+
+    elif PROFILE == "roast":
+        # Roast profile: simple spectrum of increasingly harsh roasts
+        score = 0.0
+        level = "room_temp"
+        event_count = 0
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                if cached.get("profile") == "roast":
+                    score = cached.get("score", 0.0)
+                    level = cached.get("level", "room_temp")
+                    event_count = cached.get("events_in_window", 0)
+        except (OSError, json.JSONDecodeError):
+            events = read_recent_events()
+            score = compute_score_with_half_life(events, ROAST_HALF_LIFE)
+            level = roast_score_to_level(score)
+            event_count = len(events)
+
+        cfg = ROAST_LEVELS.get(level, ROAST_LEVELS["room_temp"])
+        if cfg["hook_reason"]:
+            result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
+                score=score, events=event_count
+            )
+
     else:
         # Frustration profile (default)
         score = 0.0
@@ -379,6 +644,15 @@ def daemon_mode():
         print("  Horse mode: tap < 0.15g = spur, >= 0.15g = buck", file=sys.stderr)
         print(f"  Speed at spur >= {HORSE_SPUR_ACTIVATE}, buck at buck >= {HORSE_BUCK_ACTIVATE}", file=sys.stderr)
         _daemon_horse()
+    elif PROFILE == "drunk":
+        print(f"  Levels:  sober < {DRUNK_SOBER} < buzzed < {DRUNK_BUZZED} < tipsy < {DRUNK_TIPSY} < hammered < {DRUNK_HAMMERED} < blackout", file=sys.stderr)
+        print(f"  Half-life: {DRUNK_HALF_LIFE}s | Blackout deny: {int(DRUNK_DENY_PROBABILITY*100)}%", file=sys.stderr)
+        print("  Hangover triggers when decaying from hammered+", file=sys.stderr)
+        _daemon_drunk()
+    elif PROFILE == "roast":
+        print(f"  Levels:  room_temp < {ROAST_ROOM_TEMP} < mild_salsa < {ROAST_MILD_SALSA} < ghost_pepper < {ROAST_GHOST_PEPPER} < surface_of_the_sun < {ROAST_SURFACE_OF_THE_SUN} < heat_death", file=sys.stderr)
+        print(f"  Half-life: {ROAST_HALF_LIFE}s", file=sys.stderr)
+        _daemon_roast()
     else:
         print(f"  Levels:  calm < {FRUSTRATED_THRESHOLD} < frustrated < {HOT_THRESHOLD} < hot < {ANGRY_THRESHOLD} < angry", file=sys.stderr)
         print("  Refresh: every 500ms", file=sys.stderr)
@@ -396,7 +670,7 @@ def _daemon_frustration():
 
             try:
                 cache = {
-                    "profile": "frustration",
+                    "profile": "angry",
                     "score": round(score, 2),
                     "level": level,
                     "events_in_window": len(events),
@@ -471,6 +745,143 @@ def _daemon_horse():
                 file=sys.stderr,
             )
             prev_state = state
+
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\nvibe-check: bye!", file=sys.stderr)
+            try:
+                Path(SCORE_CACHE).unlink(missing_ok=True)
+            except OSError:
+                pass
+            break
+        except Exception as exc:
+            print(f"vibe-check: error: {exc}", file=sys.stderr)
+            time.sleep(5)
+
+
+def _daemon_drunk():
+    """Drunk profile daemon loop. Tracks intoxication with hangover lifecycle."""
+    prev_level = "sober"
+    peak_score = 0.0
+    prev_peak_score = 0.0
+    in_hangover = False
+    hangover_severity = 0
+
+    while True:
+        try:
+            events = read_recent_events()
+            score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+
+            # Track peak score this session
+            if score > peak_score:
+                peak_score = score
+
+            # Hangover transition: score dropped below hammered after being above it
+            if not in_hangover and prev_peak_score >= DRUNK_HAMMERED and score < DRUNK_HAMMERED:
+                in_hangover = True
+                hangover_severity = 0
+
+            # During hangover: more slaps increase severity, NOT re-drunk
+            if in_hangover:
+                # Count new events as hangover severity bumps
+                if score > 0 and len(events) > 0:
+                    # If score went up since last tick, someone slapped during hangover
+                    hangover_severity = max(hangover_severity, len(events))
+
+                # Hangover ends when score fully decays to 0
+                if score <= 0.0:
+                    in_hangover = False
+                    hangover_severity = 0
+                    peak_score = 0.0
+
+            level = drunk_score_to_level(score, in_hangover)
+
+            try:
+                cache = {
+                    "profile": "drunk",
+                    "score": round(score, 2),
+                    "level": level,
+                    "peak_score": round(peak_score, 2),
+                    "in_hangover": in_hangover,
+                    "hangover_severity": hangover_severity,
+                    "events_in_window": len(events),
+                    "updated_at": datetime.now().isoformat(),
+                }
+                tmp = Path(SCORE_CACHE).with_suffix(".tmp")
+                tmp.write_text(json.dumps(cache))
+                tmp.rename(SCORE_CACHE)
+            except OSError:
+                # Cache write is best-effort; hook falls back to direct
+                # computation if cache is stale or missing.
+                pass
+
+            emoji = {
+                "sober": "~", "buzzed": ".", "tipsy": "~*",
+                "hammered": "**", "blackout": "XX", "hangover": "@@",
+            }
+            ts = datetime.now().strftime("%H:%M:%S")
+            marker = " <<" if level != prev_level else ""
+            extra = ""
+            if in_hangover:
+                extra = f" hangover_sev={hangover_severity}"
+            print(
+                f"[{ts}] {emoji.get(level, '?')} {level} "
+                f"(score={score:.2f}, peak={peak_score:.2f}, slaps={len(events)}{extra}){marker}",
+                file=sys.stderr,
+            )
+            prev_level = level
+            prev_peak_score = peak_score
+
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\nvibe-check: bye!", file=sys.stderr)
+            try:
+                Path(SCORE_CACHE).unlink(missing_ok=True)
+            except OSError:
+                pass
+            break
+        except Exception as exc:
+            print(f"vibe-check: error: {exc}", file=sys.stderr)
+            time.sleep(5)
+
+
+def _daemon_roast():
+    """Roast profile daemon loop."""
+    last_level = None
+    while True:
+        try:
+            events = read_recent_events()
+            score = compute_score_with_half_life(events, ROAST_HALF_LIFE)
+            level = roast_score_to_level(score)
+
+            try:
+                cache = {
+                    "profile": "roast",
+                    "score": round(score, 2),
+                    "level": level,
+                    "events_in_window": len(events),
+                    "updated_at": datetime.now().isoformat(),
+                }
+                tmp = Path(SCORE_CACHE).with_suffix(".tmp")
+                tmp.write_text(json.dumps(cache))
+                tmp.rename(SCORE_CACHE)
+            except OSError:
+                # Cache write is best-effort; hook falls back to direct
+                # computation if cache is stale or missing.
+                pass
+
+            emoji = {
+                "room_temp": "~", "mild_salsa": "!", "ghost_pepper": "!!",
+                "surface_of_the_sun": "!!!", "heat_death": "XXXX",
+            }
+            ts = datetime.now().strftime("%H:%M:%S")
+            marker = " <<" if level != last_level else ""
+            print(
+                f"[{ts}] {emoji.get(level, '?')} {level} "
+                f"(score={score:.2f}, slaps={len(events)}){marker}",
+                file=sys.stderr,
+            )
+            last_level = level
 
             time.sleep(0.5)
         except KeyboardInterrupt:
