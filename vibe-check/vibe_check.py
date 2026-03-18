@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vibe-check: Reads spank accelerometer events and computes a frustration score.
+vibe-check: Reads spank accelerometer events and steers Claude Code behavior.
 
 Designed to run as a background daemon that continuously updates a cached
 score file. A PreToolUse hook reads that cache and injects behavioral
@@ -606,7 +606,7 @@ def hook_mode():
             )
 
     else:
-        # Frustration profile (default)
+        # Angry profile (default)
         score = 0.0
         level = "calm"
         event_count = 0
@@ -641,7 +641,7 @@ def daemon_mode():
     print("", file=sys.stderr)
 
     if PROFILE == "horse":
-        print("  Horse mode: tap < 0.15g = spur, >= 0.15g = buck", file=sys.stderr)
+        print(f"  Horse mode: tap < {HORSE_BUCK_THRESHOLD}g = spur, >= {HORSE_BUCK_THRESHOLD}g = buck", file=sys.stderr)
         print(f"  Speed at spur >= {HORSE_SPUR_ACTIVATE}, buck at buck >= {HORSE_BUCK_ACTIVATE}", file=sys.stderr)
         _daemon_horse()
     elif PROFILE == "drunk":
@@ -660,7 +660,7 @@ def daemon_mode():
 
 
 def _daemon_frustration():
-    """Frustration profile daemon loop."""
+    """Angry profile daemon loop."""
     last_level = None
     while True:
         try:
