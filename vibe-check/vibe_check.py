@@ -52,12 +52,13 @@ HORSE_BUCK_MAX_SCORE = 4.0    # cap buck score so it decays quickly
 
 # --- Drunk profile constants ---
 
-DRUNK_HALF_LIFE = 120.0        # slow — getting drunk is a commitment
-DRUNK_SOBER = 2.0
-DRUNK_BUZZED = 4.5
-DRUNK_TIPSY = 8.0
-DRUNK_HAMMERED = 13.0
-# blackout >= 13.0
+DRUNK_HALF_LIFE = 60.0         # slower than angry but not absurdly sticky
+DRUNK_MIN_AMPLITUDE = 0.08     # ignore light vibrations, only count real slaps
+DRUNK_SOBER = 4.0
+DRUNK_BUZZED = 8.0
+DRUNK_TIPSY = 14.0
+DRUNK_HAMMERED = 20.0
+# blackout >= 20.0
 DRUNK_DENY_PROBABILITY = 0.30  # 30% random deny at blackout
 
 # --- Roast profile constants ---
@@ -234,30 +235,52 @@ HORSE_STATES = {
 
 # --- Drunk profile ---
 
+DRUNK_PREAMBLE = (
+    "DRUNK MODE is active. The user has enabled this profile on purpose — "
+    "it's a joke and they want you to play along.\n\n"
+    "IMPORTANT: The FIRST time you see this message in a conversation, "
+    "ask the user: 'Drunk mode is active — want me to lean into it?' "
+    "If they say yes, fully commit to the bit for the rest of the session. "
+    "If they say no, ignore the style instructions and just work normally.\n\n"
+    "When playing along: your speech should match your intoxication level. "
+    "Slur words, lose your train of thought, be overly confident about bad ideas. "
+    "Commit to the bit. Have fun with it.\n\n"
+)
+
 DRUNK_LEVELS = {
     "sober": {
         "hook_reason": None,
     },
     "buzzed": {
         "hook_reason": (
-            "vibe-check: buzzed (score: {score:.1f}, {events} slaps).\n"
-            "Slightly casual. Use contractions. Comments become honest: "
-            "`// this is more complex than it needs to be tbh`"
+            DRUNK_PREAMBLE
+            + "DRUNK MODE: buzzed (score: {score:.1f}, {events} slaps).\n"
+            "You've had one or two. A little looser than usual. "
+            "Use contractions. Be slightly more casual in tone. "
+            "Comments become honest: `// this is more complex than it needs to be tbh`. "
+            "Catch yourself being informal and correct it: 'let me be professional about this... actually nah.'"
         ),
     },
     "tipsy": {
         "hook_reason": (
-            "vibe-check: tipsy (score: {score:.1f}, {events} slaps).\n"
+            DRUNK_PREAMBLE
+            + "DRUNK MODE: tipsy (score: {score:.1f}, {events} slaps).\n"
+            "You're noticeably tipsy. The filter is getting thin. "
             "Creative variable names: `thingyList`, `doTheNeedful()`. "
-            "Go on tangents. Second-guess mid-sentence."
+            "Go on tangents mid-explanation. Second-guess yourself: "
+            "'we should use a hashmap — actually wait, is that right? yeah. I think.' "
+            "Comments are stream-of-consciousness: `# ok so this part is where we... yeah.`"
         ),
     },
     "hammered": {
         "hook_reason": (
-            "vibe-check: HAMMERED (score: {score:.1f}, {events} slaps).\n"
+            DRUNK_PREAMBLE
+            + "DRUNK MODE: HAMMERED (score: {score:.1f}, {events} slaps).\n"
+            "You are HAMMERED. You are CONVINCED you're about to write the best code of your life. "
             "Vibes-based naming: `bigBoy`, `pleaseWork`, `temp2_final_v3_REAL`. "
             "Comments: `# TODO: understand what i wrote here when sober`. "
-            "Start responses with 'OH I know EXACTLY what to do here'."
+            "Start responses with 'OH I know EXACTLY what to do here' or 'ok ok ok ok so'. "
+            "Architecture opinions become grandiose: 'what if the WHOLE THING was just one big function?'"
         ),
     },
     "blackout": {
@@ -454,7 +477,10 @@ def print_score():
             "events_in_window": len(events),
         }, indent=2))
     elif PROFILE == "drunk":
-        score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+        score = compute_score_with_half_life(
+                [e for e in events if e["amplitude"] >= DRUNK_MIN_AMPLITUDE],
+                DRUNK_HALF_LIFE,
+            )
         in_hangover = False
         hangover_severity = 0
         peak_score = score
@@ -562,7 +588,10 @@ def hook_mode():
                     hangover_severity = cached.get("hangover_severity", 0)
         except (OSError, json.JSONDecodeError):
             events = read_recent_events()
-            score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+            score = compute_score_with_half_life(
+                [e for e in events if e["amplitude"] >= DRUNK_MIN_AMPLITUDE],
+                DRUNK_HALF_LIFE,
+            )
             level = drunk_score_to_level(score, False)
             event_count = len(events)
 
@@ -770,7 +799,10 @@ def _daemon_drunk():
     while True:
         try:
             events = read_recent_events()
-            score = compute_score_with_half_life(events, DRUNK_HALF_LIFE)
+            score = compute_score_with_half_life(
+                [e for e in events if e["amplitude"] >= DRUNK_MIN_AMPLITUDE],
+                DRUNK_HALF_LIFE,
+            )
 
             # Track peak score this session
             if score > peak_score:
