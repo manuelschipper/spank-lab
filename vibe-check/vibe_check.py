@@ -134,7 +134,7 @@ def compute_score(events):
     for ev in events:
         age = now - ev["time"]
         weight = 0.5 ** (age / DECAY_HALF_LIFE)
-        amp_factor = 1.0 + min(ev["amplitude"], 1.0) * 2
+        amp_factor = 1.0 + max(min(ev["amplitude"], 1.0), 0.0) * 2
         score += weight * amp_factor
     return score
 
@@ -195,7 +195,7 @@ def hook_mode():
         level = score_to_level(score)
         event_count = len(events)
 
-    cfg = LEVELS[level]
+    cfg = LEVELS.get(level, LEVELS["calm"])
     result = {"hookSpecificOutput": {"hookEventName": "PreToolUse"}}
 
     if cfg["hook_reason"]:

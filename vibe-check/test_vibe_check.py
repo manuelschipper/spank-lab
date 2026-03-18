@@ -20,41 +20,39 @@ import vibe_check
 # ---------------------------------------------------------------------------
 
 class TestComputeScore:
-    """Verify math matches sum(0.5^(age/15) * (1 + min(amp,1.0)*2))."""
+    """Verify math matches sum(0.5^(age/HL) * (1 + min(amp,1.0)*2))."""
 
     def test_single_event_age_zero(self, monkeypatch):
-        """Event at age=0: weight=0.5^0=1.0, amp_factor=1+min(amp,1)*2."""
+        """Event at age=0: weight=1.0, amp_factor=1+min(amp,1)*2."""
         now = 1000.0
         monkeypatch.setattr(time, "time", lambda: now)
 
         events = [{"time": now, "amplitude": 0.5}]
-        # weight = 0.5^(0/15) = 1.0
-        # amp_factor = 1.0 + min(0.5, 1.0)*2 = 2.0
-        expected = 1.0 * 2.0
+        expected = 1.0 * (1.0 + 0.5 * 2)
         assert vibe_check.compute_score(events) == pytest.approx(expected)
 
-    def test_single_event_age_15s_half_life(self, monkeypatch):
-        """Event at age=15s (one half-life): weight should be 0.5."""
+    def test_single_event_one_half_life(self, monkeypatch):
+        """Event at age=one half-life: weight should be 0.5."""
         now = 1000.0
+        hl = vibe_check.DECAY_HALF_LIFE
         monkeypatch.setattr(time, "time", lambda: now)
 
-        events = [{"time": now - 15.0, "amplitude": 0.0}]
-        # weight = 0.5^(15/15) = 0.5
-        # amp_factor = 1.0 + min(0, 1)*2 = 1.0
+        events = [{"time": now - hl, "amplitude": 0.0}]
         expected = 0.5 * 1.0
         assert vibe_check.compute_score(events) == pytest.approx(expected)
 
     def test_two_events_different_ages(self, monkeypatch):
         """Two events at different ages: scores add up."""
         now = 1000.0
+        hl = vibe_check.DECAY_HALF_LIFE
         monkeypatch.setattr(time, "time", lambda: now)
 
         events = [
-            {"time": now - 0.0, "amplitude": 1.0},   # age=0
-            {"time": now - 30.0, "amplitude": 0.5},   # age=30 (two half-lives)
+            {"time": now, "amplitude": 1.0},          # age=0
+            {"time": now - 2 * hl, "amplitude": 0.5},  # age=2 half-lives
         ]
-        # Event 1: 0.5^(0/15) * (1 + min(1,1)*2) = 1.0 * 3.0 = 3.0
-        # Event 2: 0.5^(30/15) * (1 + min(0.5,1)*2) = 0.25 * 2.0 = 0.5
+        # Event 1: 0.5^0 * (1 + 1*2) = 3.0
+        # Event 2: 0.5^2 * (1 + 0.5*2) = 0.25 * 2.0 = 0.5
         expected = 3.0 + 0.5
         assert vibe_check.compute_score(events) == pytest.approx(expected)
 
@@ -78,8 +76,8 @@ class TestComputeScore:
         monkeypatch.setattr(time, "time", lambda: now)
 
         events = [{"time": now, "amplitude": -0.5}]
-        # amp_factor = 1.0 + min(-0.5, 1.0)*2 = 1.0 + (-1.0) = 0.0
-        expected = 1.0 * 0.0
+        # amplitude clamped to 0.0, so amp_factor = 1.0 + 0.0*2 = 1.0
+        expected = 1.0 * 1.0
         assert vibe_check.compute_score(events) == pytest.approx(expected)
 
 
