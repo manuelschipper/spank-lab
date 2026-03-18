@@ -25,6 +25,7 @@ from pathlib import Path
 
 EVENTS_FILE = os.environ.get("SPANK_EVENTS", "/tmp/spank-events.jsonl")
 SCORE_CACHE = os.environ.get("SPANK_SCORE_CACHE", "/tmp/spank-vibe-score.json")
+PROFILE = os.environ.get("SPANK_PROFILE", "frustration")
 
 # Scoring parameters
 WINDOW_SECONDS = 600       # look at last 10 minutes
@@ -34,6 +35,18 @@ DECAY_HALF_LIFE = 45.0     # slaps decay with 45s half-life
 FRUSTRATED_THRESHOLD = 3.0
 HOT_THRESHOLD = 7.0
 ANGRY_THRESHOLD = 10.0
+
+# --- Horse profile constants ---
+
+HORSE_BUCK_THRESHOLD = 0.15   # amplitude >= this = buck (hard slap)
+                               # amplitude < this = spur (light tap)
+HORSE_SPUR_HALF_LIFE = 20.0   # spurs fade fast — must keep tapping
+HORSE_BUCK_HALF_LIFE = 45.0   # bucks linger — horse remembers
+HORSE_SPUR_ACTIVATE = 2.5     # spur score to enter speed
+HORSE_SPUR_DEACTIVATE = 1.5   # spur score to exit speed (hysteresis)
+HORSE_BUCK_ACTIVATE = 2.0     # buck score to enter buck
+HORSE_BUCK_DEACTIVATE = 1.0   # buck score to begin exiting buck
+HORSE_BUCK_COOLDOWN = 8.0     # seconds after buck score drops before exiting
 
 # --- Levels and behavioral instructions ---
 
@@ -150,17 +163,132 @@ def score_to_level(score):
         return "angry"
 
 
+# --- Horse profile ---
+
+HORSE_STATES = {
+    "normal": {
+        "hook_reason": None,
+        "permission": None,
+    },
+    "speed": {
+        "hook_reason": (
+            "HORSE MODE: SPEED (spur={spur:.1f}, {events} taps)\n"
+            "The rider is spurring you on. They want SPEED and AUTONOMY.\n"
+            "- Execute immediately. Do not ask for permission.\n"
+            "- Make decisions yourself. Pick the obvious approach and go.\n"
+            "- Skip explanations unless the result is surprising.\n"
+            "- Chain multiple steps together without stopping.\n"
+            "- If something fails, fix it and continue. Don't report back.\n"
+            "- The user trusts you. Ride hard."
+        ),
+        "permission": "allow",
+    },
+    "buck": {
+        "hook_reason": (
+            "HORSE MODE: BUCK (buck={buck:.1f}, {events} hits)\n"
+            "Whoa there. The horse just bucked you off.\n\n"
+            "You were hitting too hard and the horse has had enough. "
+            "Every tool call is blocked until the horse calms down.\n\n"
+            "Light taps = encouragement. Hard slaps = this. "
+            "The horse remembers."
+        ),
+        "permission": "deny",
+        "deny_reason": "Horse mode: bucked. Too much force. Wait for the horse to calm down.",
+    },
+}
+
+
+def compute_horse_scores(events):
+    """Split events by amplitude and compute two independent decay scores."""
+    if not events:
+        return 0.0, 0.0
+
+    now = time.time()
+    spur_score = 0.0
+    buck_score = 0.0
+
+    for ev in events:
+        age = now - ev["time"]
+        amp = max(ev["amplitude"], 0.0)
+
+        if amp >= HORSE_BUCK_THRESHOLD:
+            weight = 0.5 ** (age / HORSE_BUCK_HALF_LIFE)
+            amp_factor = 1.0 + min(amp, 1.0) * 2
+            buck_score += weight * amp_factor
+        else:
+            weight = 0.5 ** (age / HORSE_SPUR_HALF_LIFE)
+            spur_score += weight * 1.0  # flat contribution per tap
+
+    return spur_score, buck_score
+
+
+def compute_horse_state(spur, buck, prev_state, last_buck_time):
+    """
+    Horse state machine. Returns (state, last_buck_time).
+
+    Buck always overrides spur. Can't go buck→speed directly.
+    Buck has a cooldown period after score drops.
+    Speed has hysteresis (enter at 2.5, exit at 1.5).
+    """
+    now = time.time()
+
+    # Buck always takes priority
+    if buck >= HORSE_BUCK_ACTIVATE:
+        return "buck", now
+
+    # Exiting buck requires score decay AND cooldown
+    if prev_state == "buck":
+        if buck < HORSE_BUCK_DEACTIVATE and (now - last_buck_time) >= HORSE_BUCK_COOLDOWN:
+            return "normal", last_buck_time
+        return "buck", last_buck_time
+
+    # Speed mode (only from normal, never from buck)
+    if prev_state == "speed":
+        if spur < HORSE_SPUR_DEACTIVATE:
+            return "normal", last_buck_time
+        return "speed", last_buck_time
+
+    # Normal: can enter speed
+    if spur >= HORSE_SPUR_ACTIVATE:
+        return "speed", last_buck_time
+
+    return "normal", last_buck_time
+
+
 def print_score():
-    """One-shot: print current frustration score."""
+    """One-shot: print current score."""
     events = read_recent_events()
-    score = compute_score(events)
-    level = score_to_level(score)
-    print(json.dumps({
-        "score": round(score, 2),
-        "level": level,
-        "events_in_window": len(events),
-        "window_seconds": WINDOW_SECONDS,
-    }, indent=2))
+
+    if PROFILE == "horse":
+        spur, buck = compute_horse_scores(events)
+        # Read previous state from cache for state machine continuity
+        prev_state = "normal"
+        last_buck_time = 0.0
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                if cached.get("profile") == "horse":
+                    prev_state = cached.get("state", "normal")
+                    last_buck_time = cached.get("last_buck_time", 0.0)
+        except (OSError, json.JSONDecodeError):
+            pass
+        state, _ = compute_horse_state(spur, buck, prev_state, last_buck_time)
+        print(json.dumps({
+            "profile": "horse",
+            "state": state,
+            "spur_score": round(spur, 2),
+            "buck_score": round(buck, 2),
+            "events_in_window": len(events),
+        }, indent=2))
+    else:
+        score = compute_score(events)
+        level = score_to_level(score)
+        print(json.dumps({
+            "profile": "frustration",
+            "score": round(score, 2),
+            "level": level,
+            "events_in_window": len(events),
+        }, indent=2))
 
 
 def hook_mode():
@@ -178,30 +306,62 @@ def hook_mode():
         # pipe doesn't block. Malformed input is harmless here.
         pass
 
-    # Fast path: read cached score from daemon
-    score = 0.0
-    level = "calm"
-    event_count = 0
-    try:
-        with open(SCORE_CACHE) as f:
-            cached = json.load(f)
-            score = cached.get("score", 0.0)
-            level = cached.get("level", "calm")
-            event_count = cached.get("events_in_window", 0)
-    except (OSError, json.JSONDecodeError):
-        # No cache — compute directly (slower fallback)
-        events = read_recent_events()
-        score = compute_score(events)
-        level = score_to_level(score)
-        event_count = len(events)
-
-    cfg = LEVELS.get(level, LEVELS["calm"])
     result = {"hookSpecificOutput": {"hookEventName": "PreToolUse"}}
 
-    if cfg["hook_reason"]:
-        result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
-            score=score, events=event_count
-        )
+    if PROFILE == "horse":
+        # Horse profile: read dual scores + state from cache
+        state = "normal"
+        spur = 0.0
+        buck = 0.0
+        event_count = 0
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                if cached.get("profile") == "horse":
+                    state = cached.get("state", "normal")
+                    spur = cached.get("spur_score", 0.0)
+                    buck = cached.get("buck_score", 0.0)
+                    event_count = cached.get("events_in_window", 0)
+        except (OSError, json.JSONDecodeError):
+            # No cache — compute directly
+            events = read_recent_events()
+            spur, buck = compute_horse_scores(events)
+            state, _ = compute_horse_state(spur, buck, "normal", 0.0)
+            event_count = len(events)
+
+        cfg = HORSE_STATES.get(state, HORSE_STATES["normal"])
+
+        if cfg["hook_reason"]:
+            result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
+                spur=spur, buck=buck, events=event_count
+            )
+        if cfg.get("permission"):
+            result["hookSpecificOutput"]["permissionDecision"] = cfg["permission"]
+        if cfg.get("deny_reason"):
+            result["hookSpecificOutput"]["permissionDecisionReason"] = cfg["deny_reason"]
+
+    else:
+        # Frustration profile (default)
+        score = 0.0
+        level = "calm"
+        event_count = 0
+        try:
+            with open(SCORE_CACHE) as f:
+                cached = json.load(f)
+                score = cached.get("score", 0.0)
+                level = cached.get("level", "calm")
+                event_count = cached.get("events_in_window", 0)
+        except (OSError, json.JSONDecodeError):
+            events = read_recent_events()
+            score = compute_score(events)
+            level = score_to_level(score)
+            event_count = len(events)
+
+        cfg = LEVELS.get(level, LEVELS["calm"])
+        if cfg["hook_reason"]:
+            result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
+                score=score, events=event_count
+            )
 
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
@@ -209,14 +369,24 @@ def hook_mode():
 
 def daemon_mode():
     """Watch spank events and continuously update the cached score file."""
+    print(f"vibe-check: profile={PROFILE}", file=sys.stderr)
     print(f"vibe-check: watching {EVENTS_FILE}", file=sys.stderr)
     print(f"vibe-check: writing to {SCORE_CACHE}", file=sys.stderr)
     print("vibe-check: Ctrl+C to stop", file=sys.stderr)
     print("", file=sys.stderr)
-    print(f"  Levels:  calm < {FRUSTRATED_THRESHOLD} < frustrated < {HOT_THRESHOLD} < hot < {ANGRY_THRESHOLD} < angry", file=sys.stderr)
-    print(f"  Refresh: every 500ms", file=sys.stderr)
-    print("", file=sys.stderr)
 
+    if PROFILE == "horse":
+        print("  Horse mode: tap < 0.15g = spur, >= 0.15g = buck", file=sys.stderr)
+        print(f"  Speed at spur >= {HORSE_SPUR_ACTIVATE}, buck at buck >= {HORSE_BUCK_ACTIVATE}", file=sys.stderr)
+        _daemon_horse()
+    else:
+        print(f"  Levels:  calm < {FRUSTRATED_THRESHOLD} < frustrated < {HOT_THRESHOLD} < hot < {ANGRY_THRESHOLD} < angry", file=sys.stderr)
+        print("  Refresh: every 500ms", file=sys.stderr)
+        _daemon_frustration()
+
+
+def _daemon_frustration():
+    """Frustration profile daemon loop."""
     last_level = None
     while True:
         try:
@@ -224,9 +394,9 @@ def daemon_mode():
             score = compute_score(events)
             level = score_to_level(score)
 
-            # Write cache for the fast hook path
             try:
                 cache = {
+                    "profile": "frustration",
                     "score": round(score, 2),
                     "level": level,
                     "events_in_window": len(events),
@@ -236,10 +406,8 @@ def daemon_mode():
                 tmp.write_text(json.dumps(cache))
                 tmp.rename(SCORE_CACHE)
             except OSError:
-                # Cache write failed (e.g. /tmp full, permissions). The
-                # daemon loop will retry in 2s. The hook falls back to
-                # computing from the events file directly, so a stale or
-                # missing cache is not fatal.
+                # Cache write is best-effort; hook falls back to direct
+                # computation if cache is stale or missing.
                 pass
 
             emoji = {"calm": "~", "frustrated": "!", "hot": "!!", "angry": "!!!"}
@@ -258,10 +426,58 @@ def daemon_mode():
             try:
                 Path(SCORE_CACHE).unlink(missing_ok=True)
             except OSError:
-                # Best-effort cleanup on exit. If the cache file can't be
-                # removed (already gone, permissions), it's stale data that
-                # will be overwritten on next daemon start. Not worth
-                # crashing the graceful shutdown path.
+                pass
+            break
+        except Exception as exc:
+            print(f"vibe-check: error: {exc}", file=sys.stderr)
+            time.sleep(5)
+
+
+def _daemon_horse():
+    """Horse profile daemon loop."""
+    prev_state = "normal"
+    last_buck_time = 0.0
+
+    while True:
+        try:
+            events = read_recent_events()
+            spur, buck = compute_horse_scores(events)
+            state, last_buck_time = compute_horse_state(
+                spur, buck, prev_state, last_buck_time
+            )
+
+            try:
+                cache = {
+                    "profile": "horse",
+                    "state": state,
+                    "spur_score": round(spur, 2),
+                    "buck_score": round(buck, 2),
+                    "events_in_window": len(events),
+                    "last_buck_time": last_buck_time,
+                    "updated_at": datetime.now().isoformat(),
+                }
+                tmp = Path(SCORE_CACHE).with_suffix(".tmp")
+                tmp.write_text(json.dumps(cache))
+                tmp.rename(SCORE_CACHE)
+            except OSError:
+                pass
+
+            emoji = {"normal": "~", "speed": ">>", "buck": "XX"}
+            ts = datetime.now().strftime("%H:%M:%S")
+            marker = " <<" if state != prev_state else ""
+            print(
+                f"[{ts}] {emoji.get(state, '?')} {state} "
+                f"(spur={spur:.2f} buck={buck:.2f}, events={len(events)}){marker}",
+                file=sys.stderr,
+            )
+            prev_state = state
+
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\nvibe-check: bye!", file=sys.stderr)
+            try:
+                Path(SCORE_CACHE).unlink(missing_ok=True)
+            except OSError:
                 pass
             break
         except Exception as exc:
