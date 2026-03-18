@@ -136,7 +136,7 @@ def read_recent_events(window_seconds=WINDOW_SECONDS):
 
 def compute_score(events):
     """
-    Compute frustration score from recent slap events.
+    Compute score from recent slap events.
     Uses exponential decay — recent slaps count more.
     Amplitude scales the contribution (harder slaps = more weight).
     """
@@ -397,10 +397,10 @@ def daemon_mode():
     else:
         print(f"  Levels:  calm < {FRUSTRATED_THRESHOLD} < frustrated < {HOT_THRESHOLD} < hot < {ANGRY_THRESHOLD} < angry", file=sys.stderr)
         print("  Refresh: every 500ms", file=sys.stderr)
-        _daemon_frustration()
+        _daemon_angry()
 
 
-def _daemon_frustration():
+def _daemon_angry():
     """Angry profile daemon loop."""
     last_level = None
     while True:
@@ -504,12 +504,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Reads spank accelerometer events and computes a frustration score.",
+        description="Reads spank accelerometer events and steers Claude Code behavior.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--score", action="store_true",
-        help="One-shot: print current frustration score and exit",
+        help="One-shot: print current score and exit",
     )
     group.add_argument(
         "--hook", action="store_true",

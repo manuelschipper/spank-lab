@@ -472,7 +472,7 @@ class TestHorseHookOutput:
         """If cache has profile != 'horse', hook falls back to defaults."""
         cache_file = tmp_path / "score.json"
         cache_file.write_text(json.dumps({
-            "profile": "frustration",
+            "profile": "angry",
             "score": 5.0,
             "level": "hot",
             "events_in_window": 10,
@@ -489,7 +489,7 @@ class TestHorseHookOutput:
 
         result = json.loads(captured.getvalue())
         hook = result["hookSpecificOutput"]
-        # Should see normal horse state (preamble context), not frustration output
+        # Should see normal horse state (preamble context), not angry output
         assert "additionalContext" in hook
         assert "NORMAL" in hook["additionalContext"]
         assert "permissionDecision" not in hook
