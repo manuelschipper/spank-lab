@@ -2,7 +2,7 @@
 
 **Slap your laptop to steer Claude Code's behavior.**
 
-50% shitposting, 50% an experiment in Claude-human physical interaction modes.
+50% shitposting, 50% an experiment
 
 Slap your MacBook and Claude changes personality. Light taps make it go faster. Hard slaps make it stop and apologize. 2 profiles, each with a unique mechanic for translating physical force into AI behavior.
 
