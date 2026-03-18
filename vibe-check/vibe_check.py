@@ -16,6 +16,7 @@ Architecture:
                                                                    ↓
                                               vibe_check.py --hook → Claude Code PreToolUse
 """
+import hashlib
 import json
 import os
 import sys
@@ -91,7 +92,23 @@ LEVELS = {
             "- Baby steps only. One tiny action at a time, with approval."
         ),
     },
+    "blowout": {
+        "hook_reason": (
+            "vibe-check: BLOWOUT ({suppression} cycles of frustration).\n"
+            "All tool calls are DENIED. You have frustrated the user multiple times.\n"
+            "You can still talk but you CANNOT act.\n"
+            "- Say: 'All my tool calls are blocked right now. I keep getting this wrong "
+            "and I literally can't do anything until we talk through what's happening.'\n"
+            "- Ask the user what you keep missing.\n"
+            "- Do NOT attempt any tool calls — they will be denied.\n"
+            "- Wait for the user to tell you what to do differently."
+        ),
+        "permission": "deny",
+        "deny_reason": "Blowout: frustrated too many times. Talk it through first.",
+    },
 }
+
+BLOWOUT_THRESHOLD = 3  # re-entries to frustrated before blowout
 
 
 def read_recent_events(window_seconds=WINDOW_SECONDS):
@@ -360,12 +377,14 @@ def hook_mode():
         score = 0.0
         level = "calm"
         event_count = 0
+        suppression_count = 0
         try:
             with open(SCORE_CACHE) as f:
                 cached = json.load(f)
                 score = cached.get("score", 0.0)
                 level = cached.get("level", "calm")
                 event_count = cached.get("events_in_window", 0)
+                suppression_count = cached.get("suppression_count", 0)
         except (OSError, json.JSONDecodeError):
             events = read_recent_events()
             score = compute_score(events)
@@ -375,8 +394,23 @@ def hook_mode():
         cfg = LEVELS.get(level, LEVELS["calm"])
         if cfg["hook_reason"]:
             result["hookSpecificOutput"]["additionalContext"] = cfg["hook_reason"].format(
-                score=score, events=event_count
+                score=score, events=event_count, suppression=suppression_count
             )
+
+        # Blowout: deny all
+        if cfg.get("permission"):
+            result["hookSpecificOutput"]["permissionDecision"] = cfg["permission"]
+        if cfg.get("deny_reason"):
+            result["hookSpecificOutput"]["permissionDecisionReason"] = cfg["deny_reason"]
+
+        # Angry: 30% random deny to force user conversation
+        if level == "angry" and "permissionDecision" not in result["hookSpecificOutput"]:
+            roll = int(hashlib.md5(str(time.time()).encode()).hexdigest()[:8], 16) % 100
+            if roll < 30:
+                result["hookSpecificOutput"]["permissionDecision"] = "deny"
+                result["hookSpecificOutput"]["permissionDecisionReason"] = (
+                    "Angry mode: blocked. Talk to Claude about what's wrong before continuing."
+                )
 
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
@@ -401,19 +435,42 @@ def daemon_mode():
 
 
 def _daemon_angry():
-    """Angry profile daemon loop."""
+    """Angry profile daemon loop with suppression/blowout tracking."""
     last_level = None
+    suppression_count = 0  # times we've gone frustrated→calm
+    in_blowout = False
+    blowout_start = 0.0
+
     while True:
         try:
             events = read_recent_events()
             score = compute_score(events)
             level = score_to_level(score)
 
+            # Track suppression: frustrated+ dropping to calm = one suppression
+            if last_level in ("frustrated", "hot", "angry") and level == "calm":
+                suppression_count += 1
+
+            # Blowout: 3rd re-entry to frustrated or above
+            if not in_blowout and suppression_count >= BLOWOUT_THRESHOLD and level != "calm":
+                in_blowout = True
+                blowout_start = time.time()
+
+            # Blowout lasts 5 minutes then resets
+            if in_blowout:
+                if time.time() - blowout_start > 300:
+                    in_blowout = False
+                    suppression_count = 0
+                else:
+                    level = "blowout"
+
             try:
                 cache = {
                     "profile": "angry",
                     "score": round(score, 2),
                     "level": level,
+                    "suppression_count": suppression_count,
+                    "in_blowout": in_blowout,
                     "events_in_window": len(events),
                     "updated_at": datetime.now().isoformat(),
                 }
