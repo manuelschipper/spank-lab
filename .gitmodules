@@ -1,0 +1,3 @@
+[submodule "spank"]
+	path = spank
+	url = https://github.com/manuelschipper/spank.git
