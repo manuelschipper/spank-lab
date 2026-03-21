@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vibe-check: Reads spank accelerometer events and steers Claude Code behavior.
+vibe-check: Reads accelerometer slap events and steers Claude Code behavior.
 
 Designed to run as a background daemon that continuously updates a cached
 score file. A PreToolUse hook reads that cache and injects behavioral
@@ -417,7 +417,7 @@ def hook_mode():
 
 
 def daemon_mode():
-    """Watch spank events and continuously update the cached score file."""
+    """Watch slap events and continuously update the cached score file."""
     print(f"vibe-check: profile={PROFILE}", file=sys.stderr)
     print(f"vibe-check: watching {EVENTS_FILE}", file=sys.stderr)
     print(f"vibe-check: writing to {SCORE_CACHE}", file=sys.stderr)
@@ -561,7 +561,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Reads spank accelerometer events and steers Claude Code behavior.",
+        description="Reads accelerometer slap events and steers Claude Code behavior.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
