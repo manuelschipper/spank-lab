@@ -1,4 +1,4 @@
-# spank dat Claude
+# slap-claude
 
 **Slap your laptop to steer Claude Code's behavior.**
 
@@ -36,18 +36,18 @@ Uses **dual amplitude scoring** — events split by force into spur (< 0.25g) an
 
 ```bash
 # 1. Clone and build
-git clone --recursive https://github.com/manuelschipper/spank-dat-claude.git
-cd spank-dat-claude
+git clone --recursive https://github.com/manuelschipper/slap-claude.git
+cd slap-claude
 make
 
 # 2. Start the slap detector (needs sudo for accelerometer)
 # Terminal 1:
-./spank-claude
+./slap-claude
 
 # 3. Start the vibe-check daemon (pick a profile)
 # Terminal 2:
-python3 vibe-check/vibe_check.py                        # angry (default)
-SPANK_PROFILE=horse python3 vibe-check/vibe_check.py    # speed/buck
+python3 vibe-check/vibe_check.py                       # angry (default)
+SLAP_PROFILE=horse python3 vibe-check/vibe_check.py    # speed/buck
 
 # 4. Add the PreToolUse hook to ~/.claude/settings.json:
 ```
@@ -60,7 +60,7 @@ SPANK_PROFILE=horse python3 vibe-check/vibe_check.py    # speed/buck
         "matcher": "",
         "hooks": [{
           "type": "command",
-          "command": "python3 /path/to/spank-dat-claude/vibe-check/vibe_check.py --hook"
+          "command": "python3 /path/to/slap-claude/vibe-check/vibe_check.py --hook"
         }]
       }
     ]
@@ -73,12 +73,12 @@ SPANK_PROFILE=horse python3 vibe-check/vibe_check.py    # speed/buck
 ```
   You slap laptop       accelerometer (IOKit HID)    JSON events
   +-----------+     +-------------------------+     +------------------------+
-  |  MacBook  | --> |  spank (Go, --stdio)    | --> | /tmp/spank-events.jsonl|
+  |  MacBook  | --> |  spank (Go, --stdio)    | --> | /tmp/slap-events.jsonl |
   +-----------+     +-------------------------+     +------------------------+
                                                              |
                                                              v
                     +------------------------+     +------------------------+
-                    | /tmp/spank-vibe-       | <-- |  vibe-check daemon     |
+                    | /tmp/slap-vibe-        | <-- |  vibe-check daemon     |
                     |   score.json           |     |  (Python, 500ms loop)  |
                     +------------------------+     +------------------------+
                              |
@@ -93,17 +93,17 @@ SPANK_PROFILE=horse python3 vibe-check/vibe_check.py    # speed/buck
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SPANK_PROFILE` | `angry` | Profile: angry, horse |
-| `SPANK_EVENTS` | `/tmp/spank-events.jsonl` | Path to slap events file |
-| `SPANK_SCORE_CACHE` | `/tmp/spank-vibe-score.json` | Path to cached score |
+| `SLAP_PROFILE` | `angry` | Profile: angry, horse |
+| `SLAP_EVENTS` | `/tmp/slap-events.jsonl` | Path to slap events file |
+| `SLAP_SCORE_CACHE` | `/tmp/slap-vibe-score.json` | Path to cached score |
 
 ## Credits
 
-Built on top of [taigrr/spank](https://github.com/taigrr/spank) -- the original "slap your MacBook, it yells back" project. We forked it, added `--silent` mode, and wired it into Claude Code's hook system.
+Accelerometer reading powered by [taigrr/spank](https://github.com/taigrr/spank) — reads the Apple Silicon IMU via IOKit HID.
 
 ## Requirements
 
 - Apple Silicon MacBook (M2 or later)
 - `sudo` access (required for IOKit HID accelerometer)
-- Go 1.22+ (to build spank)
+- Go 1.22+ (to build the accelerometer reader)
 - Python 3.10+ (for vibe-check)

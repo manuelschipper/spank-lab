@@ -180,7 +180,7 @@ class TestHookMode:
         cache_file.write_text(json.dumps({
             "score": 0.0, "level": "calm", "events_in_window": 0,
         }))
-        monkeypatch.setenv("SPANK_SCORE_CACHE", str(cache_file))
+        monkeypatch.setenv("SLAP_SCORE_CACHE", str(cache_file))
         monkeypatch.setattr("sys.stdin", StringIO("{}"))
 
         captured = StringIO()
@@ -195,10 +195,10 @@ class TestHookMode:
 
     def test_hook_falls_back_when_no_cache(self, monkeypatch, tmp_path):
         """When cache file doesn't exist, hook computes from events file."""
-        monkeypatch.setenv("SPANK_SCORE_CACHE", str(tmp_path / "nonexistent.json"))
+        monkeypatch.setenv("SLAP_SCORE_CACHE", str(tmp_path / "nonexistent.json"))
 
         # Also set events file to nonexistent so we get score=0
-        monkeypatch.setenv("SPANK_EVENTS", str(tmp_path / "nonexistent-events.jsonl"))
+        monkeypatch.setenv("SLAP_EVENTS", str(tmp_path / "nonexistent-events.jsonl"))
         # Need to reload module-level constants after setenv
         monkeypatch.setattr(vibe_check, "SCORE_CACHE", str(tmp_path / "nonexistent.json"))
         monkeypatch.setattr(vibe_check, "EVENTS_FILE", str(tmp_path / "nonexistent-events.jsonl"))

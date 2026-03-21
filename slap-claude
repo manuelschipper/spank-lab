@@ -1,0 +1,5 @@
+#!/bin/bash
+# Start the accelerometer listener in silent event-only mode.
+# Requires sudo for IOKit HID access.
+SCRIPT_DIR="$(dirname "$0")"
+exec sudo "$SCRIPT_DIR/spank/spank" --stdio --silent >> "${SLAP_EVENTS:-/tmp/slap-events.jsonl}"

@@ -12,7 +12,7 @@ Usage:
     python3 vibe_check.py --hook             # Claude Code hook mode (PreToolUse)
 
 Architecture:
-    spank (sudo) → /tmp/spank-events.jsonl → vibe_check.py daemon → /tmp/spank-vibe-score.json
+    spank (sudo) → /tmp/slap-events.jsonl → vibe_check.py daemon → /tmp/slap-vibe-score.json
                                                                    ↓
                                               vibe_check.py --hook → Claude Code PreToolUse
 """
@@ -24,9 +24,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-EVENTS_FILE = os.environ.get("SPANK_EVENTS", "/tmp/spank-events.jsonl")
-SCORE_CACHE = os.environ.get("SPANK_SCORE_CACHE", "/tmp/spank-vibe-score.json")
-PROFILE = os.environ.get("SPANK_PROFILE", "angry")
+EVENTS_FILE = os.environ.get("SLAP_EVENTS", "/tmp/slap-events.jsonl")
+SCORE_CACHE = os.environ.get("SLAP_SCORE_CACHE", "/tmp/slap-vibe-score.json")
+PROFILE = os.environ.get("SLAP_PROFILE", "angry")
 
 # Scoring parameters
 WINDOW_SECONDS = 600       # look at last 10 minutes
