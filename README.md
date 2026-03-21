@@ -8,19 +8,7 @@ Slap your MacBook and Claude changes personality. Light taps make it go faster. 
 
 ## Profiles
 
-### angry (default)
-
-Standard frustration feedback. More slaps = Claude slows down, asks more, enters gentle-parent mode. At angry level, 30% of tool calls are randomly denied to force a conversation. Yo-yo between frustrated and calm three times and it blows up (blowout — all tool calls denied for 5 minutes).
-
-| Level | Score | Hook | Behavior |
-|-------|-------|------|----------|
-| calm | < 3.0 | - | Normal operation |
-| frustrated | 3.0 - 7.0 | - | Checks assumptions, concise, safe steps |
-| hot | 7.0 - 10.0 | - | Slows down, presents options, acknowledges mistakes |
-| angry | > 10.0 | 30% `deny` | Full stop. "I can tell this isn't going well." |
-| blowout | 3rd cycle | 100% `deny` | Locked out for 5 min. "We need to talk." |
-
-### horse
+### horse (default)
 
 Your MacBook is a horse. Light taps spur it to go faster. Hard slaps make it buck you off.
 
@@ -31,6 +19,18 @@ Uses **dual amplitude scoring** — events split by force into spur (< 0.25g) an
 | normal | no taps | normal permissions |
 | speed | light taps (spur >= 2.5) | `allow` all — full autonomy |
 | buck | hard slaps (buck >= 3.0) | `deny` all — blocked until calm |
+
+### angry
+
+Standard frustration feedback. More slaps = Claude slows down, asks more, enters gentle-parent mode. At angry level, 30% of tool calls are randomly denied to force a conversation. Yo-yo between frustrated and calm three times and it blows up (blowout — all tool calls denied for 5 minutes).
+
+| Level | Score | Hook | Behavior |
+|-------|-------|------|----------|
+| calm | < 3.0 | - | Normal operation |
+| frustrated | 3.0 - 7.0 | - | Checks assumptions, concise, safe steps |
+| hot | 7.0 - 10.0 | - | Slows down, presents options, acknowledges mistakes |
+| angry | > 10.0 | 30% `deny` | Full stop. "I can tell this isn't going well." |
+| blowout | 3rd cycle | 100% `deny` | Locked out for 5 min. "We need to talk." |
 
 ## Quick Setup
 
@@ -47,7 +47,7 @@ make
 # 3. Start the vibe-check daemon (pick a profile)
 # Terminal 2:
 python3 vibe-check/vibe_check.py                       # horse (default)
-SLAP_PROFILE=angry python3 vibe-check/vibe_check.py    # frustration
+SLAP_PROFILE=angry python3 vibe-check/vibe_check.py    # angry
 
 # 4. Add the PreToolUse hook to ~/.claude/settings.json:
 ```

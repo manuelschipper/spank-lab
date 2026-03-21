@@ -18,7 +18,7 @@
 
 ---
 
-## angry (default)
+## angry
 
 Slaps = "you're doing it wrong."
 

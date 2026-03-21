@@ -125,6 +125,7 @@ class TestHookMode:
         cache_file = tmp_path / "score.json"
         cache_file.write_text(json.dumps(cache_data))
         monkeypatch.setattr(vibe_check, "SCORE_CACHE", str(cache_file))
+        monkeypatch.setattr(vibe_check, "PROFILE", "angry")
 
         # Provide valid JSON on stdin (Claude Code sends hook input there)
         monkeypatch.setattr("sys.stdin", StringIO('{"hook_name": "PreToolUse"}'))
@@ -195,6 +196,7 @@ class TestHookMode:
 
     def test_hook_falls_back_when_no_cache(self, monkeypatch, tmp_path):
         """When cache file doesn't exist, hook computes from events file."""
+        monkeypatch.setattr(vibe_check, "PROFILE", "angry")
         monkeypatch.setenv("SLAP_SCORE_CACHE", str(tmp_path / "nonexistent.json"))
 
         # Also set events file to nonexistent so we get score=0
@@ -348,6 +350,7 @@ class TestCacheReadWrite:
         """End-to-end: write cache, run hook_mode, verify output matches."""
         cache_path = tmp_path / "score.json"
         monkeypatch.setattr(vibe_check, "SCORE_CACHE", str(cache_path))
+        monkeypatch.setattr(vibe_check, "PROFILE", "angry")
 
         cache_data = {
             "score": 4.5,
@@ -373,6 +376,7 @@ class TestCacheReadWrite:
         cache_path = tmp_path / "score.json"
         cache_path.write_text("{not valid json")
         monkeypatch.setattr(vibe_check, "SCORE_CACHE", str(cache_path))
+        monkeypatch.setattr(vibe_check, "PROFILE", "angry")
 
         # No events file either — should get calm
         monkeypatch.setattr(vibe_check, "EVENTS_FILE", str(tmp_path / "nope.jsonl"))
